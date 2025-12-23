@@ -28,56 +28,56 @@ async def main_async(date, output_dir, concurrency):
     
     output_path = Path(output_dir)
     
-    # Step 1: Fetch symbols for both markets
+    # Step 1: Fetch symbols
     print('[INFO] Fetching symbols for KOSPI and KOSDAQ...', file=sys.stderr)
     kospi_symbols, kosdaq_symbols = await asyncio.gather(
         fetch_symbols('KOSPI'),
         fetch_symbols('KOSDAQ')
     )
     
-    if not kospi_symbols and not kosdaq_symbols:
+    total_symbols = len(kospi_symbols or []) + len(kosdaq_symbols or [])
+    print(f'[INFO] Total symbols discovered: {total_symbols} (KOSPI: {len(kospi_symbols or [])}, KOSDAQ: {len(kosdaq_symbols or [])})', file=sys.stderr)
+    
+    if total_symbols == 0:
         print('[ERROR] No symbols found for either market, exiting', file=sys.stderr)
         return 1
     
-    # Step 2: Prepare output file paths (single file for all markets)
-    day_file = output_path / 'day' / f'{date}.txt'
-    minute_file = output_path / 'minute' / f'{date}.txt'
-    
-    # Step 3: Collect data for all markets in parallel
-    kospi_day_task = None
-    kospi_minute_task = None
-    kosdaq_day_task = None
-    kosdaq_minute_task = None
-    
+    # Step 2: Prepare tasks
+    # We maintain an explicit mapping to avoid index confusion
+    task_map = {}
     if kospi_symbols:
-        kospi_day_task = collect_day_data(date, kospi_symbols, concurrency)
-        kospi_minute_task = collect_minute_data(date, kospi_symbols, concurrency)
+        task_map['KOSPI_DAY'] = collect_day_data(date, kospi_symbols, concurrency)
+        task_map['KOSPI_MINUTE'] = collect_minute_data(date, kospi_symbols, concurrency)
     
     if kosdaq_symbols:
-        kosdaq_day_task = collect_day_data(date, kosdaq_symbols, concurrency)
-        kosdaq_minute_task = collect_minute_data(date, kosdaq_symbols, concurrency)
+        task_map['KOSDAQ_DAY'] = collect_day_data(date, kosdaq_symbols, concurrency)
+        task_map['KOSDAQ_MINUTE'] = collect_minute_data(date, kosdaq_symbols, concurrency)
     
-    # Gather all non-None tasks
-    tasks = [t for t in [kospi_day_task, kospi_minute_task, kosdaq_day_task, kosdaq_minute_task] if t is not None]
-    results = await asyncio.gather(*tasks)
+    # Step 3: Execute tasks
+    keys = list(task_map.keys())
+    print(f'[INFO] Dispatching {len(keys)} collection tasks...', file=sys.stderr)
+    results_list = await asyncio.gather(*[task_map[k] for k in keys])
     
-    # Step 4: Combine and save results
+    # Map results back to their types
+    named_results = dict(zip(keys, results_list))
+    
+    # Step 4: Combine results
     day_results = []
     minute_results = []
     
-    result_idx = 0
-    if kospi_day_task:
-        day_results.extend(results[result_idx])
-        result_idx += 1
-    if kospi_minute_task:
-        minute_results.extend(results[result_idx])
-        result_idx += 1
-    if kosdaq_day_task:
-        day_results.extend(results[result_idx])
-        result_idx += 1
-    if kosdaq_minute_task:
-        minute_results.extend(results[result_idx])
-        result_idx += 1
+    for key, data in named_results.items():
+        count = len(data)
+        print(f'[INFO] Task {key} finished: collected {count} records', file=sys.stderr)
+        if 'DAY' in key:
+            day_results.extend(data)
+        else:
+            minute_results.extend(data)
+    
+    print(f'[INFO] Final counts - Day: {len(day_results)}, Minute: {len(minute_results)}', file=sys.stderr)
+    
+    # Step 5: Save results
+    day_file = output_path / 'day' / f'{date}.txt'
+    minute_file = output_path / 'minute' / f'{date}.txt'
     
     # Save day data
     day_file.parent.mkdir(parents=True, exist_ok=True)
@@ -86,15 +86,15 @@ async def main_async(date, output_dir, concurrency):
             f.write(line + '\n')
     print(f'[INFO] Day data saved to {day_file}', file=sys.stderr)
     
-    # Save minute data (sorted by time - 4th column)
+    # Save minute data
     minute_file.parent.mkdir(parents=True, exist_ok=True)
     with open(minute_file, 'w') as f:
+        # Sort by time (4th column)
         sorted_lines = sorted(minute_results, key=lambda x: x.split('\t')[3] if len(x.split('\t')) > 3 else '')
         for line in sorted_lines:
             f.write(line + '\n')
     print(f'[INFO] Minute data saved to {minute_file}', file=sys.stderr)
     
-    print(f'[INFO] Market data collection finished for {date}', file=sys.stderr)
     return 0
 
 

@@ -21,88 +21,121 @@ MINUTE_HEADERS = {
 
 def parse_minute_rows(symbol, bs):
     """Parse minute data rows from HTML"""
-    values = [span.text.strip().replace(',', '') for span in bs.find_all('span', class_='tah')]
-    if not values:
+    table = bs.find('table', class_='type2')
+    if not table:
         return []
     
     result = []
-    # 7 values per row: Time, Price, Chg, Open, High, Low, Vol
-    for i in range(0, len(values), 7):
-        row = values[i:i+7]
-        if len(row) == 7:
-            # Result format: [symbol, price, volume, time]
-            result.append([symbol, row[1], row[6], row[0]])
+    for tr in table.find_all('tr'):
+        tds = tr.find_all('td', recursive=False)
+        if len(tds) < 7:
+            continue
+            
+        # Check if first cell has time (format HH:MM)
+        time_span = tds[0].find('span')
+        if not time_span:
+            continue
+            
+        time_text = time_span.text.strip()
+        # Relaxed regex to handle potential invisible characters or non-breaking spaces
+        if not re.search(r'\d{2}:\d{2}', time_text):
+            continue
+            
+        # Extra care for time format - extract just HH:MM
+        time_match = re.search(r'(\d{2}:\d{2})', time_text)
+        if not time_match:
+            continue
+        clean_time = time_match.group(1)
+            
+        price = tds[1].text.strip().replace(',', '')
+        volume = tds[5].text.strip().replace(',', '')
+        
+        # Result format: [symbol, price, volume, time]
+        result.append([symbol, price, volume, clean_time])
     
     return result
 
 
 async def fetch_minute_page(session, symbol, date_str, page, semaphore):
     """Fetch a single page of minute data"""
+    params = {
+        'page': page,
+        'code': symbol,
+        'thistime': date_str.replace('-', '') + '235959'
+    }
+    
     async with semaphore:
-        params = {
-            'page': page,
-            'code': symbol,
-            'thistime': date_str.replace('-', '') + '235959'
-        }
         try:
-            async with session.get(MINUTE_URL, params=params, headers=MINUTE_HEADERS, timeout=10) as response:
+            async with session.get(MINUTE_URL, params=params, headers=MINUTE_HEADERS, timeout=15) as response:
                 if response.status != 200:
                     return []
-                text = await response.read()
+                content = await response.read()
+                # Naver Finance uses EUC-KR
+                try:
+                    text = content.decode('euc-kr')
+                except:
+                    text = content.decode('utf-8', errors='ignore')
+                
                 bs = BeautifulSoup(text, 'lxml')
                 return parse_minute_rows(symbol, bs)
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Error fetching {symbol} page {page}: {e}", file=sys.stderr)
             return []
 
 
 async def fetch_minute_symbol(session, symbol, date_str, semaphore):
     """Fetch all minute data for a single symbol"""
-    params = {
-        'page': 1,
-        'code': symbol,
-        'thistime': date_str.replace('-', '') + '235959'
-    }
+    # Fetch page 1 first to determine last page
+    all_results = await fetch_minute_page(session, symbol, date_str, 1, semaphore)
+    if not all_results:
+        return []
+
+    # To find last page, we need page 1's BS again or just fetch it inside here
+    # Optimization: fetch_minute_page could return (results, last_page) but for simplicity:
+    params = { 'page': 1, 'code': symbol, 'thistime': date_str.replace('-', '') + '235959' }
+    
     try:
-        async with session.get(MINUTE_URL, params=params, headers=MINUTE_HEADERS, timeout=10) as response:
-            if response.status != 200:
-                return []
-            text = await response.read()
-            bs = BeautifulSoup(text, 'lxml')
-            
-            # Parse page 1 immediately
-            all_results = parse_minute_rows(symbol, bs)
-            if not all_results:
-                return []
+        # We need the BS to find pgRR
+        async with semaphore:
+            async with session.get(MINUTE_URL, params=params, headers=MINUTE_HEADERS, timeout=15) as response:
+                if response.status != 200:
+                    return ['\t'.join(r) for r in all_results]
+                content = await response.read()
+                try:
+                    text = content.decode('euc-kr')
+                except:
+                    text = content.decode('utf-8', errors='ignore')
+                bs = BeautifulSoup(text, 'lxml')
 
-            # Determine last page
-            pg_rr = bs.find('td', class_='pgRR')
-            if pg_rr is None:
-                last_page = 1
-            else:
-                match = re.search(r'page=([0-9]+)', pg_rr.a['href'])
-                last_page = int(match.group(1)) if match else 1
+        # Determine last page
+        pg_rr = bs.find('td', class_='pgRR')
+        if pg_rr is None:
+            last_page = 1
+        else:
+            match = re.search(r'page=([0-9]+)', pg_rr.a['href'])
+            last_page = int(match.group(1)) if match else 1
 
-            # Fetch remaining pages concurrently
-            if last_page > 1:
-                tasks = [fetch_minute_page(session, symbol, date_str, pg, semaphore) 
-                        for pg in range(2, last_page + 1)]
-                other_pages = await asyncio.gather(*tasks)
-                for page_results in other_pages:
-                    all_results.extend(page_results)
+        # Fetch remaining pages concurrently
+        if last_page > 1:
+            tasks = [fetch_minute_page(session, symbol, date_str, pg, semaphore) 
+                    for pg in range(2, last_page + 1)]
+            other_pages = await asyncio.gather(*tasks)
+            for page_results in other_pages:
+                all_results.extend(page_results)
 
-            # Dedup and sort
-            unique_data = {}
-            for res in all_results:
-                key = res[3]  # time
-                if key not in unique_data:
-                    unique_data[key] = res
-            
-            # Return sorted results
-            return ['\t'.join(unique_data[key]) for key in sorted(unique_data.keys())]
+        # Dedup and sort by time
+        unique_data = {}
+        for res in all_results:
+            key = res[3]  # time string (HH:MM)
+            if key not in unique_data:
+                unique_data[key] = res
+        
+        # Return sorted results as tab-separated strings
+        return ['\t'.join(unique_data[key]) for key in sorted(unique_data.keys())]
                     
     except Exception as e:
         print(f'[ERROR] Exception for {symbol}: {e}', file=sys.stderr)
-        return []
+        return ['\t'.join(r) for r in all_results]
 
 
 async def collect_minute_data(date_str, symbols, concurrency, output_file=None):

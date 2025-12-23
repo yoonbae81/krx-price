@@ -7,6 +7,7 @@ Fetches daily price data for given symbols.
 import argparse
 import asyncio
 import aiohttp
+import re
 import sys
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -20,22 +21,39 @@ DAY_HEADERS = {
 
 def parse_day_data(bs):
     """Parse daily OHLCV data from HTML"""
-    values = [span.text.strip().replace(',', '').replace('.', '-') 
-              for span in bs.find_all('span', class_='tah')]
-    
-    # 7 fields: date, close, delta, open, high, low, volume
-    for i in range(0, len(values), 7):
-        row = values[i:i+7]
-        if len(row) == 7:
-            yield {
-                'date': row[0],
-                'close': row[1],
-                'delta': row[2],
-                'open': row[3],
-                'high': row[4],
-                'low': row[5],
-                'volume': row[6]
-            }
+    table = bs.find('table', class_='type2')
+    if not table:
+        return
+        
+    for tr in table.find_all('tr'):
+        tds = tr.find_all('td', recursive=False)
+        if len(tds) < 7:
+            continue
+            
+        date_span = tds[0].find('span')
+        if not date_span:
+            continue
+            
+        date_text = date_span.text.strip().replace('.', '-')
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_text):
+            continue
+            
+        # 7 fields: date, close, delta, open, high, low, volume
+        # row[0]: date
+        # row[1]: close
+        # row[3]: open
+        # row[4]: high
+        # row[5]: low
+        # row[6]: volume
+        
+        yield {
+            'date': date_text,
+            'close': tds[1].text.strip().replace(',', ''),
+            'open': tds[3].text.strip().replace(',', ''),
+            'high': tds[4].text.strip().replace(',', ''),
+            'low': tds[5].text.strip().replace(',', ''),
+            'volume': tds[6].text.strip().replace(',', '')
+        }
 
 
 async def fetch_day_symbol(session, symbol, date, semaphore):
@@ -43,11 +61,15 @@ async def fetch_day_symbol(session, symbol, date, semaphore):
     async with semaphore:
         try:
             params = {'code': symbol, 'page': 1}
-            async with session.get(DAY_URL, params=params, headers=DAY_HEADERS, timeout=10) as response:
+            async with session.get(DAY_URL, params=params, headers=DAY_HEADERS, timeout=15) as response:
                 if response.status != 200:
                     return None
                 content = await response.read()
-                bs = BeautifulSoup(content, 'lxml')
+                try:
+                    text = content.decode('euc-kr')
+                except:
+                    text = content.decode('utf-8', errors='ignore')
+                bs = BeautifulSoup(text, 'lxml')
 
                 for row in parse_day_data(bs):
                     if row['date'] == date and row['open'] != '0':
