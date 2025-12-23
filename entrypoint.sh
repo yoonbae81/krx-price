@@ -11,7 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 # Add src directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+src_path = Path(__file__).parent / 'src'
+if not src_path.exists():
+    src_path = Path('/app/src')
+sys.path.insert(0, str(src_path))
 
 # Import the collection modules
 from symbol import fetch_symbols
