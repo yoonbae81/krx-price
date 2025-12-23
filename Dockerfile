@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Make scripts executable
-RUN chmod +x src/*.py scripts/*.sh
+RUN find src scripts -type f \( -name "*.py" -o -name "*.sh" \) -exec chmod +x {} + 2>/dev/null || true
 
 # Create log directory and data directory
 RUN mkdir -p /var/log/app /data

@@ -30,6 +30,7 @@ mkdir -p "$TARGET_DIR/data"
 # Copy necessary files to target directory
 echo "Copying files to $TARGET_DIR..."
 cp -r "$PROJECT_DIR/src" "$TARGET_DIR/"
+cp -r "$PROJECT_DIR/scripts" "$TARGET_DIR/"
 cp "$PROJECT_DIR/Dockerfile" "$TARGET_DIR/"
 cp "$PROJECT_DIR/docker-compose.yml" "$TARGET_DIR/"
 cp "$PROJECT_DIR/entrypoint.sh" "$TARGET_DIR/"
