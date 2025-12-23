@@ -1,5 +1,5 @@
 [Unit]
-Description=YMarket Data Collection Service
+Description=krx-price Data Collection Service
 After=docker.service
 Requires=docker.service
 

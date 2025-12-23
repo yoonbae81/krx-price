@@ -105,8 +105,8 @@ async def fetch_minute_symbol(session, symbol, date_str, semaphore):
         return []
 
 
-async def collect_minute_data(date_str, symbols, concurrency):
-    """Collect minute data for all symbols"""
+async def collect_minute_data(date_str, symbols, concurrency, output_file=None):
+    """Collect minute data for all symbols and optionally save to file"""
     print(f'[INFO] Collecting minute data for {date_str}...', file=sys.stderr)
     
     connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300)
@@ -121,6 +121,19 @@ async def collect_minute_data(date_str, symbols, concurrency):
             results.extend(symbol_results)
     
     print(f'[INFO] Minute data collected: {len(results)} lines', file=sys.stderr)
+    
+    # Save to file if output_file is provided
+    if output_file:
+        from pathlib import Path
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w') as f:
+            # Sort by 4th column (time)
+            sorted_lines = sorted(results, key=lambda x: x.split('\t')[3] if len(x.split('\t')) > 3 else '')
+            for line in sorted_lines:
+                f.write(line + '\n')
+        print(f'[INFO] Minute data saved to {output_path}', file=sys.stderr)
+    
     return results
 
 

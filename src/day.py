@@ -58,8 +58,8 @@ async def fetch_day_symbol(session, symbol, date, semaphore):
             return None
 
 
-async def collect_day_data(date, symbols, concurrency):
-    """Collect daily data for all symbols"""
+async def collect_day_data(date, symbols, concurrency, output_file=None):
+    """Collect daily data for all symbols and optionally save to file"""
     print(f'[INFO] Collecting day data for {date}...', file=sys.stderr)
     
     connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300)
@@ -75,6 +75,17 @@ async def collect_day_data(date, symbols, concurrency):
                 results.append(res)
     
     print(f'[INFO] Day data collected: {len(results)} lines', file=sys.stderr)
+    
+    # Save to file if output_file is provided
+    if output_file:
+        from pathlib import Path
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w') as f:
+            for line in sorted(results):
+                f.write(line + '\n')
+        print(f'[INFO] Day data saved to {output_path}', file=sys.stderr)
+    
     return results
 
 
