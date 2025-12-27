@@ -105,7 +105,8 @@ chmod +x scripts/deploy.sh
 
 ### 2. 수동 실행
 ```bash
-docker compose run --rm app
+# 호스트 사용자의 UID/GID를 연동하여 실행 (파일 권한 유지)
+APP_UID=$(id -u) APP_GID=$(id -g) docker compose run --rm app
 ```
 
 ---
@@ -116,4 +117,4 @@ docker compose run --rm app
 *   **디렉토리 구조**:
     *   `/srv/krx-price/day`: 일별 데이터
     *   `/srv/krx-price/minute`: 분 단위 데이터
-*   **볼륨 설정**: `docker-compose.yml`을 통해 호스트 경로와 컨테이너 내부 경로가 동기화됩니다.
+*   **볼륨 설정**: `docker-compose.yml`을 통해 호스트 경로와 컨테이너 내부 경로가 동기화됩니다. (`APP_UID`, `APP_GID` 환경 변수를 통해 호스트 사용자의 권한으로 파일이 생성됩니다.)
